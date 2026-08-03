@@ -1,0 +1,77 @@
+import { graduationRules } from "../data/requirements.ts";
+import { getCourseSubcategory, getDepartmentCurriculum, getGeneralRequirements, getLatestHandbookYear } from "./handbooks.ts";
+import type { Transcript } from "./transcript.ts";
+
+export function auditGraduation(transcript: Transcript) {
+  const admissionYear = transcript.admissionYear ?? Number(transcript.studentId.slice(0, 4));
+  const savedRule = graduationRules.find((item) =>
+    item.admissionYear === admissionYear && transcript.department.includes(item.department)
+  );
+  const handbookRule = getDepartmentCurriculum(admissionYear, transcript.department);
+  const rule = savedRule ?? handbookRule;
+  if (!rule) return null;
+
+  const completed = new Set(transcript.courses.map((course) => course.code));
+  const earnedCourses = transcript.courses.filter((course) => !["F", "NP"].includes(course.grade));
+  const earnedByCategory = new Map<string, number>();
+  for (const course of earnedCourses)
+    earnedByCategory.set(course.category, (earnedByCategory.get(course.category) ?? 0) + course.credits);
+  const general = getGeneralRequirements(admissionYear).map((requirement) => {
+    const earnedBySubcategory = new Map<string, number>();
+    const coursesBySubcategory = new Map<string, typeof earnedCourses>();
+    for (const course of earnedCourses.filter((item) => item.category === requirement.category)) {
+      const subcategory = course.name.includes("군복무경험")
+        ? "인성"
+        : getCourseSubcategory(course.year, course.code)
+          ?? getCourseSubcategory(admissionYear, course.code)
+          ?? "세부영역 확인 필요";
+      earnedBySubcategory.set(subcategory, (earnedBySubcategory.get(subcategory) ?? 0) + course.credits);
+      coursesBySubcategory.set(subcategory, [...(coursesBySubcategory.get(subcategory) ?? []), course]);
+    }
+    const requiredByLabel = new Map(requirement.subcategories);
+    const labels = [...new Set([...requiredByLabel.keys(), ...coursesBySubcategory.keys()])];
+    const details = labels.map((label) => ({ label, required: requiredByLabel.get(label) ?? 0, earned: earnedBySubcategory.get(label) ?? 0, courses: coursesBySubcategory.get(label) ?? [] }));
+    return {
+      ...requirement,
+      earned: earnedByCategory.get(requirement.category) ?? 0,
+      completedAreas: details.filter((item) => item.required > 0 && item.earned > 0).length,
+      details,
+    };
+  });
+  const latestYear = getLatestHandbookYear();
+  const current = getDepartmentCurriculum(latestYear, transcript.department);
+  const currentTypes = new Map(current?.courses.map((course) => [course.code, course.type]));
+  const required = rule.courses.filter((course) => course.type === "required").map((course) => ({
+    ...course,
+    completed: completed.has(course.code),
+    currentType: currentTypes.get(course.code) ?? "not-listed",
+    note: currentTypes.get(course.code) === "required"
+      ? `${rule.admissionYear}·${latestYear} 요람 모두 전공필수`
+      : currentTypes.get(course.code) === "elective"
+        ? `${latestYear} 요람에서는 전공선택이지만 ${rule.admissionYear} 입학생에게는 전공필수`
+        : `최신 ${latestYear} 요람에는 없지만 ${rule.admissionYear} 입학생에게는 전공필수`,
+  }));
+
+  return {
+    admissionYear,
+    handbookYear: rule.admissionYear,
+    latestHandbookYear: latestYear,
+    department: rule.department,
+    credits: "credits" in rule ? rule.credits : null,
+    earnedCredits: {
+      total: transcript.totalCredits,
+      basic: earnedByCategory.get("기초") ?? 0,
+      advanced: earnedByCategory.get("심화") ?? 0,
+      ku: earnedByCategory.get("소양") ?? 0,
+      majorRequired: earnedByCategory.get("전필") ?? 0,
+      majorElective: earnedByCategory.get("전선") ?? 0,
+      other: (earnedByCategory.get("일교") ?? 0) + (earnedByCategory.get("일선") ?? 0),
+    },
+    general,
+    required,
+    remainingRequired: required.filter((course) => !course.completed),
+    allowed: rule.courses.filter((course) => course.type === "elective" && !completed.has(course.code)),
+    allowedCourseCodes: rule.courses.map((course) => course.code),
+    source: rule.source,
+  };
+}
