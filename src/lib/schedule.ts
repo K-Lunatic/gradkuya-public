@@ -11,6 +11,7 @@ export type Course = {
   professor?: string;
   fixed?: boolean;
   color: number;
+  deliveryMode?: "이러닝" | "대면";
 };
 
 export type Preferences = {
@@ -21,6 +22,7 @@ export type Preferences = {
   preferredProfessors?: string[];
   avoidedProfessors?: string[];
   preferredCourses?: string[];
+  coursePriorities?: Record<string, string>;
   preferredCategories?: string[];
 };
 
@@ -36,23 +38,33 @@ export const courses: Course[] = [
   { id: "cs351", name: "웹프로그래밍", day: "목", start: 12, end: 14, credits: 3, group: "web", color: 5 },
 ];
 
-export function findSchedules(allCourses: Course[], preferences: Preferences) {
-  allCourses = allCourses.filter((course) => (course.meetings ?? [course]).every((meeting) => meeting.start > 0));
+export function findSchedules(allCourses: Course[], preferences: Preferences, maxCredits = Number.POSITIVE_INFINITY) {
+  allCourses = allCourses.filter((course) => course.deliveryMode === "이러닝" || (course.meetings ?? [course]).every((meeting) => meeting.start > 0));
   if (!allCourses.length) return [];
   const groups = [...new Set(allCourses.map((course) => course.group))];
   let combinations: Course[][] = [[]];
   for (const group of groups) {
     const options = allCourses.filter((course) => course.group === group);
-    combinations = combinations.flatMap((selected) => options.map((course) => [...selected, course]));
+    // ponytail: bound client-side combinations; move ranking to a worker/server if 5,000 viable partial schedules proves too narrow.
+    const canSkip = !options.some((course) => course.fixed);
+    combinations = combinations
+      .flatMap((selected) => [
+        ...(canSkip ? [selected] : []),
+        ...options.map((course) => [...selected, course]).filter((schedule) => schedule.reduce((sum, item) => sum + item.credits, 0) <= maxCredits && !hasConflict(schedule)),
+      ])
+      .toSorted((a, b) => b.reduce((sum, course) => sum + course.credits, 0) - a.reduce((sum, course) => sum + course.credits, 0))
+      .slice(0, 5_000);
+    if (!combinations.length) return [];
   }
 
-  return combinations
-    .filter((schedule) => !hasConflict(schedule))
+  const ranked = combinations
+    .filter((schedule) => schedule.length > 0)
     .map((schedule) => {
       const meetings = schedule.flatMap((course) => course.meetings ?? [course]);
       const lunchCount = meetings.filter((meeting) => meeting.start < 13 && meeting.end > 12).length;
       const preferredCount = schedule.filter((course) => course.professor && preferences.preferredProfessors?.includes(course.professor)).length;
       const preferredCourseCount = schedule.filter((course) => preferences.preferredCourses?.includes(course.group)).length;
+      const priorityWeight = schedule.reduce((sum, course) => { const value = preferences.coursePriorities?.[course.group]; return sum + (value === "!" ? 1_000 : value ? (10 - Number(value)) * 10 : 0); }, 0);
       const preferredCategoryCount = schedule.filter((course) => course.category && preferences.preferredCategories?.includes(course.category)).length;
       const avoided = schedule.filter((course) => course.professor && preferences.avoidedProfessors?.includes(course.professor));
       const freeDayMeetings = meetings.filter((meeting) => preferences.freeDays.includes(meeting.day));
@@ -64,6 +76,7 @@ export function findSchedules(allCourses: Course[], preferences: Preferences) {
         ...avoided.map((course) => `기피 교수 ${course.professor} 분반 포함`),
         ...(morningCount ? ["오전 9시 수업 포함"] : []),
         ...(preferences.lunch && lunchCount ? ["점심시간 수업 포함"] : []),
+        ...(() => { const omitted = groups.filter((group) => !schedule.some((course) => course.group === group)).map((group) => allCourses.find((course) => course.group === group)?.name ?? group); return omitted.length ? [`${omitted.slice(0, 3).join(" · ")}${omitted.length > 3 ? ` 외 ${omitted.length - 3}과목` : ""} 제외 후 구성`] : []; })(),
       ];
       const penalty = freeDayMeetings.length * 20 + blockedMeetings.length * 18 + avoided.length * 30 + morningCount * 15 + (preferences.lunch ? lunchCount * 12 : 0);
       const hasPositivePreferences = Boolean(preferences.preferredProfessors?.length || preferences.preferredCourses?.length || preferences.preferredCategories?.length);
@@ -72,11 +85,24 @@ export function findSchedules(allCourses: Course[], preferences: Preferences) {
         credits: schedule.reduce((sum, course) => sum + course.credits, 0),
         score: Math.max(0, Math.min(100, (hasPositivePreferences ? 90 : 100) + preferredCount * 5 + preferredCourseCount * 5 + preferredCategoryCount * 3 - penalty)),
         preferenceHits: preferredCount + preferredCourseCount + preferredCategoryCount,
+        preferredCourseCount,
+        priorityWeight,
         reasons,
       };
     })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+    .sort((a, b) => b.priorityWeight - a.priorityWeight || b.credits - a.credits || b.score - a.score);
+  const distinct = new Map<string, (typeof ranked)[number]>();
+  for (const schedule of ranked) {
+    const groupsKey = schedule.courses.map((course) => course.group).toSorted().join("|");
+    if (!distinct.has(groupsKey)) distinct.set(groupsKey, schedule);
+    if (distinct.size === 5) break;
+  }
+  if (distinct.size < 5) for (const schedule of ranked) {
+    if ([...distinct.values()].includes(schedule)) continue;
+    distinct.set(`section:${schedule.courses.map((course) => course.id).toSorted().join("|")}`, schedule);
+    if (distinct.size === 5) break;
+  }
+  return [...distinct.values()].slice(0, 5);
 }
 
 export function explainScheduleFailure(allCourses: Course[], preferences: Preferences) {
@@ -99,6 +125,22 @@ export function explainScheduleFailure(allCourses: Course[], preferences: Prefer
     findSchedules(allCourses.filter((course) => course.group !== group), preferences).length > 0
   ).map((group) => names.get(group)!);
   return { blocked: blocked.map((group) => names.get(group)!), conflicts, removable };
+}
+
+export function fillSchedule(allCourses: Course[], fixedGroups: Set<string>, maxCredits: number, preferences: Preferences) {
+  const counted = (schedule: Course[]) => schedule.filter((course) => !/Nano-LAB|K-Project/i.test(course.name)).reduce((sum, course) => sum + course.credits, 0);
+  let chosen = findSchedules(allCourses.filter((course) => fixedGroups.has(course.group)), preferences, maxCredits)[0]?.courses ?? [];
+  const selected = new Set(chosen.map((course) => course.group));
+  if (allCourses.some((course) => course.fixed && fixedGroups.has(course.group)) && !chosen.some((course) => course.fixed)) return selected;
+  // ponytail: cap browser-side trials; move this search server-side if useful candidates routinely exceed 200.
+  for (const group of [...new Set(allCourses.map((course) => course.group))].filter((item) => !selected.has(item)).slice(0, 200)) {
+    if (counted(chosen) >= maxCredits) break;
+    const options = allCourses.filter((course) => course.group === group && counted([...chosen, course]) <= maxCredits);
+    if (!options.length) continue;
+    const next = findSchedules([...chosen, ...options], preferences, maxCredits)[0];
+    if (next) { selected.add(group); chosen = next.courses; }
+  }
+  return selected;
 }
 
 function hasConflict(schedule: Course[]) {

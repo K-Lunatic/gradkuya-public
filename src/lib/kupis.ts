@@ -22,6 +22,7 @@ type KupisRow = {
   params: string;
   sust_list?: string;
   sugang_remk?: string;
+  remk?: string;
 };
 
 type SourcedRow = KupisRow & { sourceMenu: string; sourceLectCd: string; sourceDepartment: string; sourceArea?: string; affiliations: CourseAffiliation[]; subcategories: string[] };
@@ -43,6 +44,7 @@ export type LiveCourse = Course & {
   enrollmentNote: string;
   deliveryMode: "이러닝" | "대면";
   subcategories: string[];
+  restriction: string;
 };
 
 export async function getAllCourses() {
@@ -139,7 +141,15 @@ function toCourse(row: SourcedRow): LiveCourse {
     enrollmentNote: row.sugang_remk?.trim() || "",
     deliveryMode: row.sourceMenu === "9" ? "이러닝" : "대면",
     subcategories: row.subcategories,
+    restriction: courseRestriction(row),
   };
+}
+
+export function courseRestriction(row: Pick<KupisRow, "lec_nm" | "sugang_remk" | "remk" | "sust_list">) {
+  const note = `${row.sugang_remk ?? ""} ${row.remk ?? ""} ${row.sust_list ?? ""}`.replace(/\s+/g, " ");
+  if (/(?:외국인|유학생|교환학생).{0,12}(?:전용|대상|한정|만\s*수강)|(?:전용|대상).{0,12}(?:외국인|유학생|교환학생)/.test(note)) return "외국인·유학생 대상 과목";
+  if (/^(?:생활한국어|한국어\s*작문)/.test(row.lec_nm) && !/(한국인|내국인).{0,8}(?:수강\s*가능|허용)/.test(note)) return "외국인·유학생 대상 여부 확인 필요";
+  return "";
 }
 
 async function getText(url: string, fresh = false) {

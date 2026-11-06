@@ -1,14 +1,11 @@
-import { PDFParse } from "pdf-parse";
 import { createHmac, randomBytes } from "node:crypto";
-import { join, sep } from "node:path";
+import { extractPdfText } from "@/lib/pdf-server";
 import { parseTranscript } from "@/lib/transcript";
 import type { Transcript } from "@/lib/transcript";
 import { auditGraduation } from "@/lib/graduation";
 import { ensureHandbook } from "@/lib/handbooks";
 
 const MAX_PDF_SIZE = 10 * 1024 * 1024;
-const cMapUrl = join(process.cwd(), "node_modules", "pdfjs-dist", "cmaps") + sep;
-PDFParse.setWorker(join(process.cwd(), "node_modules", "pdfjs-dist", "legacy", "build", "pdf.worker.mjs"));
 const sessionSecret = process.env.SESSION_SECRET ?? randomBytes(32);
 
 export async function POST(request: Request) {
@@ -29,10 +26,9 @@ export async function POST(request: Request) {
   if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-")
     return Response.json({ error: "올바른 PDF 파일이 아닙니다." }, { status: 400 });
 
-  let parser: PDFParse | undefined;
   try {
-    parser = new PDFParse({ data: bytes, cMapUrl, cMapPacked: true });
-    const { text } = await parser.getText();
+    const result = await extractPdfText(bytes, true);
+    const text = Array.isArray(result.text) ? result.text.join("\n") : result.text;
     if (!text.trim())
       return Response.json({ error: "입력값이 없는 PDF입니다. 성적이 표시된 원본 PDF를 업로드해 주세요." }, { status: 422 });
 
@@ -46,7 +42,5 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[api/audit] PDF analysis failed", error);
     return Response.json({ error: error instanceof Error ? error.message : "PDF 분석에 실패했습니다." }, { status: 422 });
-  } finally {
-    await parser?.destroy();
   }
 }
