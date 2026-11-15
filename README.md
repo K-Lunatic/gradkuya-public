@@ -1,46 +1,19 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 졸업할KU야 · GradKUya
 
-## Getting Started
+성적표와 입학연도 요람을 대조해 남은 졸업요건을 확인하고, 들을 과목을 시간표로 조합하는 도구입니다.
 
-First, run the development server:
+**[가상 성적표 결과 보기](https://k-lunatic.github.io/Foundation/gradkuya/)** — 파일 업로드 없이 예제 과목과 졸업요건 계산 결과를 확인할 수 있습니다.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
+## 실행
+
+Node.js 22 이상과 pnpm을 사용합니다.
+
+```sh
+pnpm install --frozen-lockfile
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-버그 제보를 개발자 Discord로 전달하려면 `.env.local`에 서버 전용 웹훅을 설정합니다.
-
-```env
-BUG_REPORT_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
-```
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
+브라우저에서 [localhost:3000](http://localhost:3000)을 엽니다. 성적표 PDF 파싱과 졸업요건·시간표 검사는 `pnpm check`로 실행합니다. 버그 제보 연동을 사용할 때만 서버 환경변수 `BUG_REPORT_DISCORD_WEBHOOK_URL`을 설정합니다.
 
 ## 배포 자료
 
